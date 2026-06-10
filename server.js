@@ -53,6 +53,17 @@ db.exec(`
     goals INTEGER NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
   );
+  CREATE TABLE IF NOT EXISTS clasico_predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    match_id TEXT NOT NULL,
+    h1 INTEGER,
+    a1 INTEGER,
+    locked INTEGER DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, match_id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
 `);
 
 app.use(cors());
@@ -98,6 +109,22 @@ function calcScore(pred, result) {
   return pts;
 }
 
+function calcScoreClasico(pred, result) {
+  if (!result || result.h1 === null) return { pts: null, exacto: false };
+  let pts = 0;
+  let exacto = false;
+  if (pred.h1 !== null && pred.a1 !== null) {
+    const predSign = Math.sign(pred.h1 - pred.a1);
+    const resSign = Math.sign(result.h1 - result.a1);
+    if (predSign === resSign) {
+      pts += 3;
+      if (pred.h1 === result.h1 && pred.a1 === result.a1) { pts += 3; exacto = true; }
+    }
+  }
+  return { pts, exacto };
+}
+
+// ── REGISTER / LOGIN ──────────────────────
 app.post('/api/register', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Faltan datos' });
@@ -125,6 +152,7 @@ app.post('/api/login', (req, res) => {
   res.json({ token, username: user.username, isAdmin: user.is_admin === 1 });
 });
 
+// ── PREDICTIONS (prode principal) ─────────
 app.get('/api/predictions', authMiddleware, (req, res) => {
   const preds = db.prepare('SELECT * FROM predictions WHERE user_id = ?').all(req.user.id);
   const map = {};
@@ -146,6 +174,7 @@ app.post('/api/predictions/:matchId', authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
+// ── TOP SCORER ────────────────────────────
 app.post('/api/topscorer/:date', authMiddleware, (req, res) => {
   const { date } = req.params;
   const { player_name } = req.body;
@@ -166,6 +195,7 @@ app.get('/api/topscorer/:date', authMiddleware, (req, res) => {
   res.json(pick || null);
 });
 
+// ── SCORES / LEADERBOARD principal ────────
 app.get('/api/scores/me', authMiddleware, (req, res) => {
   const preds = db.prepare('SELECT * FROM predictions WHERE user_id = ?').all(req.user.id);
   const results = db.prepare('SELECT * FROM results').all();
@@ -213,6 +243,53 @@ app.get('/api/leaderboard', authMiddleware, (req, res) => {
   res.json(scores);
 });
 
+// ── CLÁSICO ───────────────────────────────
+app.post('/api/clasico/predictions/:matchId', authMiddleware, (req, res) => {
+  const { matchId } = req.params;
+  const { h1, a1 } = req.body;
+  const existing = db.prepare('SELECT locked FROM clasico_predictions WHERE user_id = ? AND match_id = ?').get(req.user.id, matchId);
+  if (existing && existing.locked) return res.status(403).json({ error: 'Partido cerrado' });
+  db.prepare(`INSERT INTO clasico_predictions (user_id, match_id, h1, a1, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(user_id, match_id) DO UPDATE SET
+    h1=excluded.h1, a1=excluded.a1, updated_at=excluded.updated_at
+  `).run(req.user.id, matchId, h1 ?? null, a1 ?? null);
+  res.json({ ok: true });
+});
+
+app.get('/api/clasico/predictions', authMiddleware, (req, res) => {
+  const preds = db.prepare('SELECT * FROM clasico_predictions WHERE user_id = ?').all(req.user.id);
+  const map = {};
+  preds.forEach(p => { map[p.match_id] = p; });
+  res.json(map);
+});
+
+app.get('/api/clasico/leaderboard', authMiddleware, (req, res) => {
+  const users = db.prepare('SELECT id, username FROM users').all();
+  const allPreds = db.prepare('SELECT * FROM clasico_predictions').all();
+  const allResults = db.prepare('SELECT * FROM results').all();
+  const resultMap = {};
+  allResults.forEach(r => { resultMap[r.match_id] = r; });
+  const scores = users.map(u => {
+    const preds = allPreds.filter(p => p.user_id === u.id);
+    let total = 0, exactos = 0;
+    preds.forEach(p => {
+      const { pts, exacto } = calcScoreClasico(p, resultMap[p.match_id]);
+      if (pts !== null) { total += pts; if (exacto) exactos++; }
+    });
+    return { username: u.username, score: total, exactos, predictions: preds.length };
+  });
+  const filtered = scores.filter(u => u.predictions > 0).sort((a, b) => b.score - a.score);
+  res.json(filtered);
+});
+
+app.post('/api/admin/clasico/lock/:matchId', adminMiddleware, (req, res) => {
+  const { matchId } = req.params;
+  db.prepare('UPDATE clasico_predictions SET locked=1 WHERE match_id=?').run(matchId);
+  res.json({ ok: true });
+});
+
+// ── ADMIN ─────────────────────────────────
 app.post('/api/admin/result/:matchId', adminMiddleware, (req, res) => {
   const { matchId } = req.params;
   const { h1, a1, ya, yb, ca, cb } = req.body;
@@ -223,6 +300,7 @@ app.post('/api/admin/result/:matchId', adminMiddleware, (req, res) => {
     ca=excluded.ca, cb=excluded.cb, updated_at=excluded.updated_at
   `).run(matchId, h1, a1, ya, yb, ca, cb);
   db.prepare('UPDATE predictions SET locked=1 WHERE match_id=?').run(matchId);
+  db.prepare('UPDATE clasico_predictions SET locked=1 WHERE match_id=?').run(matchId);
   res.json({ ok: true });
 });
 
