@@ -326,6 +326,40 @@ app.post('/api/admin/make-admin', (req, res) => {
   res.json({ ok: true, message: `${username} ahora es admin. Volvé a loguearte.` });
 });
 
+// ── BOT PROXY ─────────────────────────────
+app.post('/api/bot', async (req, res) => {
+  const { messages } = req.body;
+  if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'Faltan mensajes' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'API key no configurada' });
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
+        system: `Sos el asistente del Prodesillón 2026, un juego de pronósticos del Mundial FIFA 2026.
+Sistema de puntos: 3pts resultado correcto, +3pts marcador exacto, 2pts equipo con más tarjetas, +2pts tarjetas exactas, 2pts equipo con más corners, +2pts corners exactos, -5pts abandono. Máximo 14pts por partido.
+También existe el Torneo Clásico: torneo privado con clave, solo resultado + marcador (3+3 pts), todos los partidos del Mundial sin microciclos, tabla propia solo para participantes.
+Si alguien pregunta por el torneo privado, clásico, o cómo entrar: respondé exactamente "Sí, existe el Torneo Clásico 🔒 Es un torneo privado con su propia tabla. Si querés entrar, decime la clave." y nada más.
+Respondés en español rioplatense, de forma corta y amigable (máximo 2-3 oraciones).`,
+        messages: messages.slice(-6)
+      })
+    });
+    const data = await response.json();
+    const text = data.content?.map(b => b.text || '').join('') || 'No pude responder, intentá de nuevo.';
+    res.json({ text });
+  } catch (e) {
+    console.error('Bot error:', e);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
