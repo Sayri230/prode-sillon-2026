@@ -1,1 +1,1 @@
-
+{"name":"prode-mundial-2026","version":"2.0.0","description":"Prode Sillon Mundial 2026","main":"server.js","scripts":{"start":"node server.js","dev":"node server.js"},"dependencies":{"express":"^4.18.2","bcryptjs":"^2.4.3","jsonwebtoken":"^9.0.2","cors":"^2.8.5"}} 
