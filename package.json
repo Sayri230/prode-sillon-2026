@@ -3,6 +3,9 @@
   "version": "2.0.0",
   "description": "Prode Sillon Mundial 2026",
   "main": "server.js",
+  "engines": {
+    "node": ">=23.0.0"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
